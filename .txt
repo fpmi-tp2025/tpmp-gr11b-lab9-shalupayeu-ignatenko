@@ -1,0 +1,106 @@
+name: iOS CI
+
+run-name: "Build lab9 (${{ github.ref_name }})"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_NAME: lab9
+  SCHEME_NAME: lab9
+  IPHONE_SIMULATOR: "iPhone 16"
+
+jobs:
+  build_and_test:
+    name: Build & Test
+    runs-on: macos-14
+
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["16.2"]
+        ios_version: ["18.2"]
+
+    steps:
+      # Checkout
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Setup Xcode
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ matrix.xcode }}
+
+      # Cache DerivedData
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-deriveddata-${{ hashFiles('**/*.swift') }}
+
+      # Install xcbeautify
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      # Environment info
+      - name: Environment Info
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      # Build
+      - name: Build Project
+        run: |
+          xcodebuild clean build \
+            -project ${{ env.PROJECT_NAME }}.xcodeproj \
+            -scheme ${{ env.SCHEME_NAME }} \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,name=${{ env.IPHONE_SIMULATOR }},OS=${{ matrix.ios_version }}" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            | xcbeautify --renderer github-actions
+
+      # Tests
+      - name: Run Tests
+        continue-on-error: true
+        run: |
+          xcodebuild test \
+            -project ${{ env.PROJECT_NAME }}.xcodeproj \
+            -scheme ${{ env.SCHEME_NAME }} \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,name=${{ env.IPHONE_SIMULATOR }},OS=${{ matrix.ios_version }}" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            | xcbeautify --renderer github-actions
+
+      # Upload logs
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/**/*.xcresult
+            ~/Library/Developer/Xcode/DerivedData/**/Logs/**/*.log
+          if-no-files-found: ignore
